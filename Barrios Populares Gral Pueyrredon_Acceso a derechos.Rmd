@@ -1,0 +1,753 @@
+---
+title: "Barrios Populares de General Pueyrredón"
+subtitle: "Acceso a Servicios"
+author: "Graciela Bellotti"
+date: "2025-07-21"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+```{r}
+library(leaflet)
+library(leaflet.providers)
+library(osmdata)
+library(sf)
+library(tidyverse)
+library(ggmap)
+library(gt)
+library(osrm)
+```
+
+## Presentación del tema
+El objetivo de este trabajo es analizar las condiciones de vida de los habitantes de los Barrios Populares de General Pueyrredón a partir de dos ejes:
+
+-   Acceso a servicios básicos: electricidad, agua y cloacas,
+
+-   Acceso a instituciones que garanticen el derecho a la educación y la salud.
+
+Según el Registro Nacional de Barrios Populares (RENABAP) se considera **Barrio Popular** a "*los barrios vulnerables en los que viven al menos 8 familias agrupadas o contiguas, donde más de la mitad de la población no cuenta con título de propiedad del suelo ni acceso regular a dos, o más, de los servicios básicos (red de agua corriente, red de energía eléctrica con medidor domiciliario y/o red cloacal*".
+
+A continuación utilizaremos la base de datos disponibles en el [sitio](https://www.argentina.gob.ar/obras-publicas/sisu/renabap/mapa) del Registro Nacional de Barrios Populares a fin de identificar cuales se encuentran localizados en el Partido de General Pueyrredón, cuantas familias viven en ellos, y cuantas cuentan con acceso a los servicios de electricidad, agua y cloacas.
+
+En una segunda instancia, localizamos las escuelas y hospitales a fin de indagar en torno a la disponibilidad de acceso a salud y educación.
+
+## Análisis exploratorio de la información
+
+
+```{r carga de base de barrios, include=FALSE}
+#cargo base de datos
+barrios <- st_read("data/renabap-datos-barrios-gpkg") %>% 
+  filter(provincia %in% "Buenos Aires" & departamento %in% "General Pueyrredón")
+
+#obtengo bbox para futuro mapa base
+bbox <- st_bbox(barrios)
+bbox <- as.numeric(bbox)
+
+```
+
+
+
+```{r análisis exploratorio, include=FALSE}
+#análisis exploratorio
+head(barrios) #observo variables y muestra de categorías
+summary(barrios) #resumen estadístico de la base de datos
+unique(barrios$nombre_barrio) #nombres de los barrios
+
+#la existencia de más filas que cantidad de barrios se debe a las variables de acceso a servicios en las cuales hay casos de más de una categoría por barrio
+```
+
+La base de datos del RENABAP, delimitada al partido de General Pueyrredón, cuenta con 72 observaciones y 18 variables entre las cuales se encuentran: nombre de los barrios, año de creación, acceso a electricidad, acceso a cloacas, acceso a agua corriente, superficie, cantidad de viviendas y de familias, y ubicación geográfica de los barrios.
+
+En total se cuenta con 62 Barrios distribuidos a lo largo del territorio.
+
+Para complementar la información disponible en este data set, descaragamos[^1] las siguientes bases de datos:
+
+[^1]: Las bases fueron descargadas del Portal de Datos Abiertos de la Municipipalidad de General Pueyrredón <https://datos.mardelplata.gob.ar/>.
+
+-   Shapefile de los establecimientos de salud públicos, que nos permitirá analizar la cercanía de los barrios a los centros de salud.
+
+-   Shapefile de las escuelas públicas provinciales y municipales, que nos permitirá analizar la cercanía de los barrios a los centros educativos.
+
+# Desarrollo del tema
+
+## Características de los Barrios Populares
+
+En este apartado vamos a analizar la distribución espacial de los barrios y el tamaño de los mismos.
+
+### Localización
+
+
+```{r , include=F}
+#Descarga de Mapa Base
+
+mardel_mapa <- get_stadiamap(bbox = bbox,  maptype = "stamen_terrain", zoom = 12, force = TRUE) 
+
+#Grafico el mapa para chequear que esta ok
+ggmap(mardel_mapa) 
+
+#Otra opcion es obtener el bbox desde OpenStreet
+#mardel <- getbb("Mar del Plata, General Pueyrredón, Buenos Aires, Argentina") 
+
+#Obtengo el mapa desde Stadia
+#mardel_mapa2 <- get_stadiamap(mardel,  type = "osm", zoom = 12)  
+#me quedo con el primer bbox, se ajusta mejor a los barrios
+
+#Obtengo el archivo geográfico
+#mardel_st <- getbb("Mar del Plata, General Pueyrredón, Buenos Aires, Argentina",  format_out = "sf_polygon") 
+
+```
+
+```{r, include=FALSE}
+
+#Agrupo a nivel barrio para poder contar la cantidad de flias, viviendas y sup en Hectáreas
+
+res_barrios <-  barrios %>% 
+    select(nombre_barrio,cantidad_familias_aproximada,cantidad_viviendas_aproximadas, superficie_m2) %>% 
+  group_by(nombre_barrio) %>% 
+  summarise(Q_flias = sum(cantidad_familias_aproximada),
+            Q_viviendas = sum(cantidad_viviendas_aproximadas),
+            Sup_M2 = sum(superficie_m2),
+            Hect = round(sum(superficie_m2)/10000),
+            M2XFlia = sum(superficie_m2)/sum(cantidad_familias_aproximada)) %>% 
+  arrange(desc(Q_flias)) 
+
+```
+
+```{r}
+#Grafico con un leaflet, le agrego popups con información: nombre, cantidad de familias y hectáreas
+
+labels <- sprintf(
+   "<strong>%s</strong><br/>%g Flias<br/>%g Has",
+    res_barrios$nombre_barrio, 
+    res_barrios$Q_flias, 
+    res_barrios$Hect) %>% 
+  lapply(htmltools::HTML)
+
+leaflet() %>%
+  addTiles() %>%
+ addPolygons(data = res_barrios,
+  fillColor = "blue",
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  dashArray = "3",
+  fillOpacity = 0.7,
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = labels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto"))
+
+
+
+
+```
+
+### Cantidad de Familias
+
+Para facilitar la visualización dividimos los barrios en dos grupos (por encima y por debajo de la mediana de cantidad de familias).
+
+El barrio con el valor de la mediana es Newbery con 120 familias. Por otro lado los barrios con mayor cantidad de famiias son: Autódromo (2.112 familias), Nuevo Golf (1.650 familias) y en tercer lugar La Herradura (1.210 familias). En el otro extremo se encuentran: San Carlos y barrio "Sin Nombre" con 9 familias e Hipódromo con solo 11 familias.
+
+```{r}
+
+#grafico barrios con mayor cantidad de familias  
+res_barrios %>% 
+  filter(Q_flias >= median(Q_flias)) %>% 
+ggplot(aes(x = fct_reorder(nombre_barrio,Q_flias), y = Q_flias))+
+geom_col( fill = "#FF6666")+
+  theme_minimal()+
+  coord_flip() +
+  labs(title = "Barrios con mayor cantidad de familias",
+       subtitle = "-Mayor o igual a la mediana-",
+       caption= "Fuente: RENABAP",
+       x = "Barrio",
+       y = "Cantidad de familias")+
+    geom_label(colour = "grey2",
+    aes(label = format(Q_flias, big.mark = ".")), 
+    size = 2)
+
+#grafico barrios con menor cantidad de familias 
+res_barrios %>% 
+  filter(Q_flias < median(Q_flias)) %>% 
+ggplot(aes(x = fct_reorder(nombre_barrio,Q_flias), y = Q_flias))+
+geom_col( fill = "lightblue")+
+  theme_minimal()+
+  coord_flip() +
+  labs(title = "Barrios con menor cantidad de familias",
+       subtitle = "-Menor a la mediana-",
+       caption= "Fuente: RENABAP",
+       x = "Barrio",
+       y = "Cantidad de familias")+
+    geom_label(colour = "grey2",
+    aes(label = format(Q_flias, big.mark = ".")), 
+    size = 2)
+ 
+```
+
+En el siguiente mapa se puede observar la distribución de los barrios según la cantidad de familias que viven en ellos.
+
+```{r mapa, fig.width=8, fig.height=6, out.width="100%"}
+
+#Grafico el mapa para observar la distribución de los barrios según población
+ggmap(mardel_mapa) +
+geom_sf(data=res_barrios, aes(fill=Q_flias), color="white", alpha=0.8, ,inherit.aes = F) +
+labs(title = "Barrios Populares de General Pueyrredón",
+     fill = "Cantidad de Familias",
+     caption= "Fuente: RENABAP")+
+  scale_fill_viridis_c() +
+  guides(fill=guide_legend(title.position = "top", ncol=2))+
+  theme_minimal() +
+theme(plot.margin = margin(0.25, 1, 0.25, 0.1, "cm"), #ajustar los margenes del gráfico
+        panel.background = element_rect(fill = "gray100", colour = "gray100", size = 2, linetype = "solid"), #fondo del gráfico
+        panel.grid.major = element_line(size = 0.5, linetype = "dashed", colour = "gray80"), #lineas del gráfico
+        panel.grid.minor = element_line(size = 0.25, linetype = "dashed", colour = "gray90"), #líneas auxiliares
+        title=element_text(size=12, face = "bold"), #tamaño de titulo del mapa
+        legend.key.size = unit(0.3, "cm"), #alto de cuadrados de referencia
+        legend.key.width = unit(0.4,"cm"), #ancho de cuadrados de referencia 
+        legend.position="right", #ubicacion de leyenda
+        legend.direction = "horizontal", #dirección de la leyenda
+        legend.title=element_text(size=10, face = "bold"), #tamaño de titulo de leyenda
+        legend.text=element_text(size=7), #tamaño de texto de leyenda
+        plot.caption=element_text(face = "italic", colour = "gray35",size=6), #tamaño de nota al pie
+        axis.text = element_blank(), #texto eje X e Y
+        axis.ticks = element_blank())
+
+
+#Opcion cloropletico con leaflet
+
+#pal <- colorNumeric(palette = "RdBu", domain = c(0:2500))
+
+bins <- c(0, 50, 100, 500, 1000, 2000, Inf)
+pal <- colorBin("YlOrRd", domain = res_barrios$Q_flias, bins = bins)
+
+labels <- sprintf(
+   "<strong>%s</strong><br/>%g Flias<br/>%g Has",
+    res_barrios$nombre_barrio, 
+    res_barrios$Q_flias, 
+    res_barrios$Hect) %>% 
+  lapply(htmltools::HTML)
+
+leaflet() %>%
+  addTiles() %>%
+ addPolygons(data = res_barrios,
+  fillColor = ~pal(Q_flias),
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  dashArray = "3",
+  fillOpacity = 0.7,
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = labels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto"))
+
+
+
+```
+
+## Acceso a servicios básicos
+
+A continuación analizamos el acceso a servicios básicos. Dado que la disponibilidad de servicios no es a nivel barrio (hay barrios con sectores que tienen acceso y otros que no), agrupamos la cantidad familias que tienen acceso a:
+
+-   Red cloacal
+
+-   Electricidad
+
+-   Agua corriente
+
+### Efluentes cloacales
+
+En el siguiente gráfico se observa que tan sólo el 6% de las familias cuentan con acceso a conexión formal a la red cloacal, mientras que el 68% de las familias con "Desagüe solo a pozo ciego/hoyo" y un 25% cuenta con "Desagüe a cámara séptica y pozo ciego".
+
+```{r cloacas}
+#cuento a nivel de acceso a cloacas
+res_cloacas <-  barrios %>% 
+  mutate(TotalFlias = sum(cantidad_familias_aproximada),
+         PorcFlias = round((cantidad_familias_aproximada/TotalFlias)*100,2)) %>% 
+    select(nombre_barrio,cantidad_familias_aproximada, PorcFlias, efluentes_cloacales) %>% 
+  group_by(efluentes_cloacales) %>% 
+  summarise(Q_flias = sum(cantidad_familias_aproximada),
+            P_flias = sum(PorcFlias)
+            ) %>% 
+  arrange(desc(P_flias)) 
+
+#grafico porcentaje de familias según tipo de acceso a cloacas
+ggplot(data = res_cloacas,aes(x = fct_reorder(efluentes_cloacales,P_flias), y = P_flias))+
+geom_bar(stat = "identity",fill = "#00b159")+
+  theme_minimal()+
+  coord_flip() +
+  labs(title = "Porcentaje de familias según acceso",
+       subtitle = "Efluentes cloacales",
+       caption = "Fuente: RENABAP",
+       x = "Tipo de acceso",
+       y = "% de familias")+
+    geom_label(colour = "grey2",
+    aes(label = P_flias), 
+    size = 3)+
+  theme(axis.text.x = element_blank())
+
+#Mapa según tipo de acceso a cloacas
+ggmap(mardel_mapa) +
+geom_sf(data=res_cloacas, aes(fill=efluentes_cloacales), color="white", alpha=0.8, ,inherit.aes = F) +
+labs(title = "Barrios Populares de General Pueyrredón",
+     subtitle = "Acceso a cloacas",
+     fill = "Efluentes cloacales",
+     caption= "Fuente: RENABAP")+
+  scale_fill_viridis_d() +
+  guides(fill=guide_legend(title.position = "top", ncol=2))+
+  theme_minimal() +
+theme(plot.margin = margin(0.25, 1, 0.25, 0.1, "cm"), #ajustar los margenes del gráfico
+        panel.background = element_rect(fill = "gray100", colour = "gray100", size = 2, linetype = "solid"), #fondo del gráfico
+        panel.grid.major = element_line(size = 0.5, linetype = "dashed", colour = "gray80"), #lineas del gráfico
+        panel.grid.minor = element_line(size = 0.25, linetype = "dashed", colour = "gray90"), #líneas auxiliares
+        title=element_text(size=12, face = "bold"), #tamaño de titulo del mapa
+        legend.key.size = unit(0.3, "cm"), #alto de cuadrados de referencia
+        legend.key.width = unit(0.4,"cm"), #ancho de cuadrados de referencia 
+        legend.position="right", #ubicacion de leyenda
+        legend.direction = "horizontal", #dirección de la leyenda
+        legend.title=element_text(size=10, face = "bold"), #tamaño de titulo de leyenda
+        legend.text=element_text(size=7), #tamaño de texto de leyenda
+        plot.caption=element_text(face = "italic", colour = "gray35",size=6), #tamaño de nota al pie
+        axis.text = element_blank(), #texto eje X e Y
+        axis.ticks = element_blank())
+
+
+
+```
+
+**Mapa dinámico**: se grafican los barrios según tipo de eliminación de efluentes cloacales. Haciendo "**click**" se brinda información del nombre del Barrio, Cantidad de Familias y tipo de acceso.
+
+```{r}
+#se agrega un leaflet con colores segun acceso
+
+pal <- colorFactor("inferno", barrios$efluentes_cloacales)
+
+leaflet() %>%
+  addTiles() %>%
+    addPolygons(data = res_barrios, fillColor = ~pal(barrios$efluentes_cloacales), fillOpacity = 5, color = "black", weight = 1,                    popup = paste("Nombre:", res_barrios$nombre_barrio, "<br>","Familias:", format(barrios$cantidad_familias_aproximada, big.mark = "."), "<br>", "Servicio:", barrios$efluentes_cloacales))
+
+
+```
+
+### Electricidad
+
+A continuación se observa que alrededor de la mitad de las familias cuenta con una conexión irregular al servicio eléctrico:
+
+```{r electricidad}
+
+#cuento a nivel de acceso a electricidad
+
+ res_elect <-  barrios %>% 
+  mutate(TotalFlias = sum(cantidad_familias_aproximada),
+         PorcFlias = round((cantidad_familias_aproximada/TotalFlias)*100,2),
+    energia = case_when(energia_electrica == "Conexión formal a la red con medidor domiciliario con factura" ~ "Formal con medidor",
+                   energia_electrica == "Conexión irregular a la red" ~ "Conexión irregular",
+                   energia_electrica == "Conexión regular a la red con medidor domiciliario con consumo limitado" ~ "Formal con consumo limitado",
+                   energia_electrica == "Conexión a la red con medidor comunitario" ~ "Con medidor comunitario")) %>% 
+    select(nombre_barrio,PorcFlias, cantidad_familias_aproximada, energia) %>% 
+  group_by(energia) %>% 
+  summarise(Q_flias = sum(cantidad_familias_aproximada),
+            P_flias = sum(PorcFlias)
+            ) %>% 
+  arrange(desc(P_flias)) 
+
+#porcentaje de familias segun tipo de acceso a electricidad
+ggplot(data = res_elect,aes(x = fct_reorder(energia, P_flias), y = P_flias))+
+geom_col( fill = "#d11141")+
+  theme_minimal()+
+  coord_flip() +
+  labs(title = "Porcentaje de familias según acceso",
+       subtitle = "Acceso a electricidad",
+       x = "Tipo de acceso",
+       y = "% de familias")+
+    geom_label(colour = "grey2",
+    aes(label = P_flias), 
+    size = 3)+
+  theme(axis.text.x = element_blank())
+
+#Mapa: distribución según tipo de acceso a electricidad
+ggmap(mardel_mapa) +
+geom_sf(data=res_elect, aes(fill=energia), color="white", alpha=0.8, ,inherit.aes = F) +
+labs(title = "Barrios Populares de General Pueyrredón",
+     fill = "Energía Eléctrica",
+     caption= "Fuente: RENABAP")+
+  scale_fill_viridis_d() +
+  guides(fill=guide_legend(title.position = "top", ncol=2))+
+  theme_minimal() +
+theme(plot.margin = margin(0.25, 1, 0.25, 0.1, "cm"), #ajustar los margenes del gráfico
+        panel.background = element_rect(fill = "gray100", colour = "gray100", size = 2, linetype = "solid"), #fondo del gráfico
+        panel.grid.major = element_line(size = 0.5, linetype = "dashed", colour = "gray80"), #lineas del gráfico
+        panel.grid.minor = element_line(size = 0.25, linetype = "dashed", colour = "gray90"), #líneas auxiliares
+        title=element_text(size=12, face = "bold"), #tamaño de titulo del mapa
+        legend.key.size = unit(0.3, "cm"), #alto de cuadrados de referencia
+        legend.key.width = unit(0.4,"cm"), #ancho de cuadrados de referencia 
+        legend.position="right", #ubicacion de leyenda
+        legend.direction = "horizontal", #dirección de la leyenda
+        legend.title=element_text(size=10, face = "bold"), #tamaño de titulo de leyenda
+        legend.text=element_text(size=7), #tamaño de texto de leyenda
+        plot.caption=element_text(face = "italic", colour = "gray35",size=6), #tamaño de nota al pie
+        axis.text = element_blank(), #texto eje X e Y
+        axis.ticks = element_blank())
+
+
+
+
+```
+
+**Mapa dinámico**: se grafican los barrios según su acceso a la energía eléctrica. Haciendo "**click**" se brinda información del nombre del Barrio, Cantidad de Familias y tipo de acceso.
+
+```{r}
+#leaflet
+pal <- colorFactor("magma", barrios$energia_electrica)
+
+leaflet() %>%
+  addTiles() %>%
+    addPolygons(data = res_barrios, fillColor = ~pal(barrios$energia_electrica), fillOpacity = 10, color = "black", weight = 1,                    popup = paste("Nombre:", res_barrios$nombre_barrio, "<br>","Familias:", format(barrios$cantidad_familias_aproximada, big.mark = "."), "<br>", "Servicio:", barrios$energia_electrica))
+```
+
+### Agua corriente
+
+Con relación al acceso a agua corriente, tal como podemos observar en el siguiente gráfico, el 33% de las familias cuenta con bomba de agua de pozo domiliaria, un 26% cuenta con acceso a la conexión a la red pública sin factura, un 20% con acceso a la conexión a la red pública con factura. Sin embargo, aún persiste un 18% con acceso irregular y 2.6% depende de una bomba de pozo comunitaria.
+
+```{r agua}
+
+#cuento a nivel de acceso a agua corriente
+res_agua <-  barrios %>% 
+    mutate(TotalFlias = sum(cantidad_familias_aproximada),
+           PorcFlias = round((cantidad_familias_aproximada/TotalFlias)*100,2),
+           agua = case_when(agua_corriente == "Bomba de agua de pozo domiciliaria" ~ "Bomba de Pozo Domicilio", 
+                            agua_corriente == "Conexión formal a la red de agua con factura" ~ "Formal con Factura",
+                            agua_corriente == "Bomba de agua de pozo comunitaria" ~ "Bomba de Pozo Comunitaria",
+                            agua_corriente == "Conexión regular a la red de agua pero sin factura" ~ "Formal sin Factura",
+                            agua_corriente == "Conexión irregular a la red de agua" ~ "Irregular")) %>% #acorto categorias, mejora referencias
+    select(nombre_barrio,cantidad_familias_aproximada, PorcFlias, agua) %>% 
+  group_by(agua) %>% 
+  summarise(Q_flias = sum(cantidad_familias_aproximada),
+            P_flias = sum(PorcFlias)
+            ) %>% 
+  arrange(desc(P_flias)) 
+
+ggplot(data = res_agua,aes(x = fct_reorder(agua, P_flias), y = P_flias))+
+geom_col( fill = "#00aedb")+
+  theme_minimal()+
+  coord_flip() +
+  labs(title = "Porcentaje de familias según acceso",
+       subtitle = "Agua Corriente",
+       x = "Tipo de acceso",
+       y = "% de familias")+
+    geom_label(colour = "grey2",
+    aes(label = P_flias), 
+    size = 3)+
+  theme(axis.text.x = element_blank())
+
+#Mapa: distribución de acceso a agua corriente
+ggmap(mardel_mapa) +
+geom_sf(data=res_agua, aes(fill=agua), color="white", alpha=0.8, ,inherit.aes = F) +
+labs(title = "Barrios Populares de Gral Pueyrredón",
+     subtitle = "Acceso al agua corriente",
+     fill = "Agua corriente",
+     caption= "Fuente: RENABAP")+
+  scale_fill_viridis_d() +
+  guides(fill=guide_legend(title.position = "top", ncol=2))+
+  theme_minimal() +
+theme(plot.margin = margin(0.25, 1, 0.25, 0.1, "cm"), #ajustar los margenes del gráfico
+        panel.background = element_rect(fill = "gray100", colour = "gray100", size = 2, linetype = "solid"), #fondo del gráfico
+        panel.grid.major = element_line(size = 0.5, linetype = "dashed", colour = "gray80"), #lineas del gráfico
+        panel.grid.minor = element_line(size = 0.25, linetype = "dashed", colour = "gray90"), #líneas auxiliares
+        title=element_text(size=12, face = "bold"), #tamaño de titulo del mapa
+        legend.key.size = unit(0.3, "cm"), #alto de cuadrados de referencia
+        legend.key.width = unit(0.4,"cm"), #ancho de cuadrados de referencia 
+        legend.position="right", #ubicacion de leyenda
+        legend.direction = "horizontal", #dirección de la leyenda
+        legend.title=element_text(size=10, face = "bold"), #tamaño de titulo de leyenda
+        legend.text=element_text(size=7), #tamaño de texto de leyenda
+        plot.caption=element_text(face = "italic", colour = "gray35",size=6), #tamaño de nota al pie
+        axis.text = element_blank(), #texto eje X e Y
+        axis.ticks = element_blank())
+
+
+
+```
+
+**Mapa dinámico**: se grafican los barrios según su acceso al agua corriente. Haciendo "**click**" se brinda información del nombre del Barrio, Cantidad de Familias y tipo de acceso.
+
+```{r}
+#leaflet
+pal <- colorFactor("viridis", barrios$agua_corriente)
+leaflet() %>%
+  addTiles() %>%
+    addPolygons(data = res_barrios, fillColor = ~pal(barrios$agua_corriente), fillOpacity = 5, color = "black", weight = 1,                    popup = paste("Nombre:", res_barrios$nombre_barrio, "<br>","Familias:", format(barrios$cantidad_familias_aproximada, big.mark = "."), "<br>", "Servicio:", barrios$agua_corriente))
+```
+
+# Acceso a derechos: salud y educación
+
+## Acceso a la salud
+
+En el mapa que se presenta a continuación se puede observar la distribución de los centros de salud pública (provinciales y municipales):
+
+```{r}
+#cargo base
+salud <- st_read("data/establecimientos-salud-publicos/establecimientos-salud-publicos.shp")#esta base es de toda la provincia de Buenos Aires
+
+#necesito delimitarlos a Mar del Plata, para ello descargo el st de OSM
+mardel_st <- getbb("Mar del Plata, General Pueyrredón, Buenos Aires, Argentina",  format_out = "sf_polygon") 
+
+#delimito a Gral Pueyrredón
+saludMDP <- st_intersection(salud, mardel_st)
+
+#mapa
+ggmap(mardel_mapa) +
+  geom_sf(data=salud, color="red", size=1.5, inherit.aes = F, alpha=5) +
+  scale_fill_viridis_d() +
+  labs(title = "Centros de Salud Públicos y Barrios Populares de General Pueyrredón",
+       fill = "Barrio") +
+  theme_minimal() 
+```
+
+## Acceso a la Educación
+
+En el siguiente mapa se puede visualizar la localización de las escuelas públicas (provinciales y municipales).
+
+```{r}
+#cargo bases (son tres para cada tipo de escuela)
+eduprov <- st_read("data/escuelas-publicas-provinciales/escuelasPublicasProvinciales.shp") %>% 
+  mutate(Tipo = "Provincial")
+edumuni <- st_read("data/escuelas-publicas-municipales/escuelasPublicasMunicipales.shp")%>% 
+  mutate(Tipo = "Municipal")
+
+
+edupublica <- rbind(eduprov,edumuni)
+
+
+#mapa
+ggmap(mardel_mapa) +
+  geom_sf(data=eduprov, color="green", size=1.5, inherit.aes = F, alpha=5) +
+  geom_sf(data=edumuni, color="green4", size=1.5, inherit.aes = F, alpha=5) +
+  #geom_sf(data=eduprov, color="orange3", size=0.9, inherit.aes = F, alpha=0.1) +
+  scale_fill_viridis_d() +
+  labs(title = "Escuelas públicas -provinciales y municipales- y Barrios Populares de General Pueyrredón",
+       fill = "Tipo") +
+  theme_minimal() 
+
+```
+
+## Mapa interactivo
+
+Podemos observar de forma conjunta la información mencionada previamente en el siguiente mapa, lo cual nos permite observar la cercanía de escuelas y centros de salud a los barrios.
+
+```{r}
+leaflet() %>%
+   #addProviderTiles(providers$Esri.NatGeoWorldMap) %>%
+  addTiles() %>% 
+    addPolygons(data = res_barrios, fillColor = "blue", fillOpacity = 0.5, color = "black", weight = 1,                    popup = paste("Nombre:", res_barrios$nombre_barrio, "<br>","Familias:", format(res_barrios$Q_flias, big.mark = "."), "<br>", "Sup (Ha):", format(res_barrios$Hect, big.mark = "."))) %>%     
+  addCircleMarkers(data = saludMDP, color = "red", radius = 3, popup = paste("Nombre:", saludMDP$NOMBRE, "<br>","Tipo:", saludMDP$CATEG_ESTA)) %>% 
+    addCircleMarkers(data = edupublica, color = "green", radius = 3, 
+                     popup = paste("Nombre:", edupublica$NOMBRE, "<br>","Tipo:", edupublica$Tipo)) 
+
+```
+
+# Distancias
+
+## Distancias a centros de salud
+
+A continuación calculamos los centros de salud a los que podría acceder un/a habitante en un tiempo de caminata de 30 minutos. A fin de simplificar la visualización de dicha información, realizamos el cálculo para los 6 Barrios más poblados.
+
+```{r}
+#calculo centroide
+#opcion 1: me quedo solo con la geometria y calculo los centroides, el problema es q pierdo el resto de las variables
+#ncg = st_geometry(barrios)
+#cntrd = st_centroid(ncg)
+
+ppales_barrios <- res_barrios %>% 
+  arrange(desc(Q_flias)) 
+
+ppales_barrios <- ppales_barrios[1:6,]
+  
+
+#opcion 2: me quedo con todas las variables y calculo el cntrd
+cntrd = st_centroid(ppales_barrios)
+
+#ggmap(mardel_mapa)+
+ # geom_sf(data = barrios, inherit.aes = F, color = "blue")+
+  #geom_sf(data = cntrd, inherit.aes = F, color = "red", size = 0.5)
+
+#obtengo coordenadas
+centers <- cbind(cntrd, st_coordinates(cntrd)) %>% 
+  arrange(desc(Q_flias))
+
+B1 <- centers[1,]
+B2 <- centers[2,]
+B3 <- centers[3,]
+B4 <- centers[4,]
+B5 <- centers[5,]
+B6 <- centers[6,]
+
+#calculo isocronas
+
+iso_B1 <- osrmIsochrone(loc = c(B1$X, B1$Y), 
+                           osrm.profile = "foot",
+                           breaks = seq(from = 0, to = 30, by = 10), 
+                           res = 35)
+iso_B2 <- osrmIsochrone(loc = c(B2$X, B2$Y), 
+                           osrm.profile = "foot",
+                           breaks = seq(from = 0, to = 30, by = 10), 
+                           res = 35)
+iso_B3 <- osrmIsochrone(loc = c(B3$X, B3$Y), 
+                           osrm.profile = "foot",
+                           breaks = seq(from = 0, to = 30, by = 10), 
+                           res = 35)
+iso_B4 <- osrmIsochrone(loc = c(B4$X, B4$Y), 
+                           osrm.profile = "foot",
+                           breaks = seq(from = 0, to = 30, by = 10), 
+                           res = 35)
+iso_B5 <- osrmIsochrone(loc = c(B5$X, B5$Y), 
+                           osrm.profile = "foot",
+                           breaks = seq(from = 0, to = 30, by = 10), 
+                           res = 35)
+iso_B6 <- osrmIsochrone(loc = c(B6$X, B6$Y), 
+                           osrm.profile = "foot",
+                           breaks = seq(from = 0, to = 30, by = 10), 
+                           res = 35)
+
+
+
+#grafico mapa con barrios, centroides e isocronas
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(data = iso_B1, color = "green") %>% 
+  addPolygons(data = iso_B2, color = "green") %>% 
+  addPolygons(data = iso_B3, color = "green") %>% 
+  addPolygons(data = iso_B4, color = "green") %>% 
+  addPolygons(data = iso_B5, color = "green") %>% 
+  addPolygons(data = iso_B6, color = "green") %>% 
+  addCircleMarkers(data = cntrd, color = "blue")%>% 
+    addPolygons(data = res_barrios, fillColor = "blue", fillOpacity = 0.5, color = "black", weight = 1,                    popup = paste("Nombre:", res_barrios$nombre_barrio, "<br>","Familias:", format(res_barrios$Q_flias, big.mark = "."), "<br>", "Sup (Ha):", format(res_barrios$Hect, big.mark = "."))) %>%     
+  addCircleMarkers(data = saludMDP, color = "red", radius = 3, popup = paste("Nombre:", saludMDP$NOMBRE, "<br>","Tipo:", saludMDP$CATEG_ESTA)) 
+```
+
+Los centros de salud a los que se pueden acceder a pie, en un tiempo maximo de 30 minutos son:
+
+```{r}
+sf_use_s2(FALSE)
+
+salud_1 <- st_intersection(saludMDP, iso_B1) %>% 
+  mutate(Barrio= "Autodromo")
+salud_2 <- st_intersection(saludMDP, iso_B2)%>% 
+  mutate(Barrio= "Nuevo Golf")
+salud_3 <- st_intersection(saludMDP, iso_B3)%>% 
+  mutate(Barrio= "La Herradura")
+salud_4 <- st_intersection(saludMDP, iso_B4)%>% 
+  mutate(Barrio= "Las Heras")
+salud_5 <- st_intersection(saludMDP, iso_B5)%>% 
+  mutate(Barrio= "Parque Independencia")
+salud_6 <- st_intersection(saludMDP, iso_B6)%>% 
+  mutate(Barrio= "El Colmenar")
+
+
+AccesoSalud <- rbind(salud_1, salud_2, salud_3, salud_4, salud_5, salud_6) %>% 
+  select(Barrio, NOMBRE, CATEG_ESTA, JURISDICCI, isomin, isomax) %>% 
+  st_drop_geometry() %>% 
+  gt()
+
+AccesoSalud
+```
+
+En los barrios de La Herradura y El Colmenar no existen centros de salud en el radio de 30 minutos.
+
+## Distancias a instituciones educativas
+
+Realizamos la misma tarea pero esta vez para calcular las instituciones educativas -provinciales y municipales- a las que podría acceder un/a habitante en un tiempo de caminata de 30 minutos.
+
+El Barrio Parque Independencia no cuenta con Establecimientos Educativos en el radio de 30 minutos.
+
+```{r}
+#Mapa interactivo con educación e isocronas
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(data = iso_B1, color = "green") %>% 
+  addPolygons(data = iso_B2, color = "green") %>% 
+  addPolygons(data = iso_B3, color = "green") %>% 
+  addPolygons(data = iso_B4, color = "green") %>% 
+  addPolygons(data = iso_B5, color = "green") %>% 
+  addPolygons(data = iso_B6, color = "green") %>% 
+  addCircleMarkers(data = cntrd, color = "blue") %>% 
+  addPolygons(data = res_barrios, fillColor = "blue", fillOpacity = 0.5, color = "black", weight = 1,                    popup = paste("Nombre:", res_barrios$nombre_barrio, "<br>","Familias:", format(res_barrios$Q_flias, big.mark = "."), "<br>", "Sup (Ha):", format(res_barrios$Hect, big.mark = "."))) %>%     
+    addCircleMarkers(data = edupublica, color = "purple", radius = 3, 
+                     popup = paste("Nombre:", edupublica$NOMBRE, "<br>","Tipo:", edupublica$Tipo))
+```
+
+A continuación se informan las instituciones educativas a las que se puede acceder caminando en un tiempo máximo de 30 minutos:
+
+```{r}
+sf_use_s2(FALSE)
+edu_1 <- st_intersection(edupublica, iso_B1)%>% 
+  mutate(Barrio= "Autodromo")
+edu_2 <- st_intersection(edupublica, iso_B2)%>% 
+  mutate(Barrio= "Nuevo Golf")
+edu_3 <- st_intersection(edupublica, iso_B3)%>% 
+  mutate(Barrio= "La Herradura")
+edu_4 <- st_intersection(edupublica, iso_B4)%>% 
+  mutate(Barrio= "Las Heras")
+edu_5 <- st_intersection(edupublica, iso_B5)%>% 
+  mutate(Barrio= "Parque Independencia")
+edu_6 <- st_intersection(edupublica, iso_B6)%>% 
+  mutate(Barrio= "El Colmenar")
+
+
+AccesoEdu <- rbind(edu_1, edu_2, edu_3, edu_4, edu_5, edu_6) %>% 
+  select(Barrio, NOMBRE, Tipo, isomin, isomax) %>% 
+  st_drop_geometry() %>% 
+  gt()
+
+AccesoEdu
+
+```
+
+# Conclusiones
+
+Según datos suministrados por el RENABAP en el Partido de General Pueyrredón radican 62 Barrios Populares en donde viven aproximadamente unas 15.580 familias.
+
+El tamaño de los barrios, en cuanto a cantidad de familias que habitan en ellos, varía ampliamente. Cuatro barrios lideran el ranking: La Herradura (1.210 familias) y Las Herás (1.100 familias). Sin embargo, En el otro extremo se encuentran: San Carlos y barrio "Sin Nombre" con 9 familias e Hipódromo con solo 11 familias.
+
+**Acceso a servicios básicos**
+
+A través del analisis realizado podemos observar limitaciones en el acceso a servicios básicos por parte de los y las habitantes de los Barrios Populares.
+
+-   El acceso a a la conexión formal a **cloacas** alcanza solamente al 6% de las familias, mientras que la mayoría -el 68%- cuenta con desagüe a pozo ciego / hoyo.
+
+-   En el caso del **servicio eléctrico**, la conexión irregular representa aproximadamente a la mitad de las familias.
+
+-   Por último, observamos que un 18% de las familias cuenta con acceso irregular al **agua corriente** y un 2.6% depende de una bomba de pozo comunitaria.
+
+Las problemáticas estructurales que constituyen las situaciones de pobreza quedan por fuera del abordaje de medición a través de ingresos (Linea de Pobreza). La geolocalización de los servicios constituye una herramienta de gran utilidad al momento de planificar políticas públicas orientadas a mejorar las condiciones de vida de quienes habitan los barrios populares.
+
+**Derecho a la salud y educación**
+
+Tal como podemos observar en el mapa interactivo, los barrios más alejados del casco urbano del Partido de General Pueyrredon tienen accesos limitados a los centros de salud o una escuela en sus inmediaciones.
+
+El cálculo de distancias nos brinda ejemplos concretos de las dificultades que constituyen habitar un Barrio Popular e identifica carencias en el territorio que sirven de insumo al momento de planificar políticas públicas.
+
+En el caso de la salud pudimos observar que dos Barrios (La Herradura y El Colmenar) no cuentan con instituciones de salud a las que se pueda llegar en 30 minutos de caminata. Cabe aclarar que en el caso de los demás Barrios, el acceso es unicamente a C.A.P.S (Centros de Atención Primaria de la Salud) que cubren consultas de baja complejidad y sólo cuentan con atención ambulatoria.
+
+Si bien los establecimientos educativos son más numerosos, descubrimos que el Barrio Parque Independencia no cuenta en su radio de 30 minutos con una institución educativa.
+
+A lo largo del análisis identificamos las dificultades de acceso a derechos básicos con las que cuentan los y las habitantes de los barrios analizados. La pobreza estructural emerge como una multiplicidad de obstáculos que condicionan fuertemente la vida de quienes viven en ella, y cuya superación excede ampliamente los esfuerzos individuales.
