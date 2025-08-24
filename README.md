@@ -1,6 +1,6 @@
 # Barrios-Populares-Mar-del-Plata
 
-Georeferenciación y mapas dinámicos. 
+Georeferenciación y mapas dinámicos. Análisis de distancias.
 
 Analisis de acceso a servicios de electricidad, cloacas y agua corriente por parte de los y las habitantes de los Barrios Populares del Partido de Gral Pueyrredón. Al mismo tiempo se analiza la cercanía a instituciones de salud pública y establecimientos educativos.
 
